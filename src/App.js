@@ -3,6 +3,7 @@ import ButtonGroup from "react-bootstrap/ButtonGroup";
 import ButtonToolbar from "react-bootstrap/ButtonToolbar";
 import Container from "react-bootstrap/Container";
 import Row from "react-bootstrap/Row";
+import Dropdown from "react-bootstrap/Dropdown";
 import Col from "react-bootstrap/Col";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -25,10 +26,28 @@ function throttle(callback, delay) {
   };
 }
 
+function downloadURI(uri, name) {
+  let link = document.createElement("a");
+  link.download = name;
+  link.href = uri;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 const Tools = {
   HAND: 0,
   PENCIL: 1,
   ERASER: 2,
+};
+
+const Colors = {
+  BLACK: "black",
+  RED: "red",
+  GREEN: "green",
+  BLUE: "blue",
+  YELLOW: "yellow",
+  PURPLE: "purple",
 };
 
 export default class App extends Component {
@@ -49,11 +68,12 @@ export default class App extends Component {
       canvasY: 0,
       canvasWidth: window.innerWidth,
       canvasHeight: window.innerHeight,
-      saveURL: "",
     };
 
     this.canvas = React.createRef();
 
+    this.redrawCanvas = this.redrawCanvas.bind(this);
+    this.fitCanvasToWindow = this.fitCanvasToWindow.bind(this);
     this.setTool = this.setTool.bind(this);
     this.onMouseDown = this.onMouseDown.bind(this);
     this.onMouseUp = this.onMouseUp.bind(this);
@@ -62,7 +82,57 @@ export default class App extends Component {
     this.beginDrawing = this.beginDrawing.bind(this);
     this.endDrawing = this.endDrawing.bind(this);
     this.draw = this.draw.bind(this);
+    this.adjustX = this.adjustX.bind(this);
+    this.adjusty = this.adjustY.bind(this);
     this.drawLineTo = this.drawLineTo.bind(this);
+    this.saveImage = this.saveImage.bind(this);
+
+    window.addEventListener("resize", this.fitCanvasToWindow);
+  }
+
+  redrawCanvas(dataURL, offsetX = 0, offsetY = 0) {
+    const canvas = this.canvas.current;
+    let img = new Image();
+    img.onload = function () {
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, offsetX, offsetY);
+    };
+    img.src = dataURL;
+  }
+
+  getFitWidth(canvasWidth, canvasX) {
+    const effectiveWidth = canvasWidth - canvasX;
+    if (effectiveWidth < window.innerWidth) {
+      canvasWidth += window.innerWidth - effectiveWidth;
+    }
+    return canvasWidth;
+  }
+
+  getFitHeight(canvasHeight, canvasY) {
+    const effectiveHeight = canvasHeight - canvasY;
+    if (effectiveHeight < window.innerHeight) {
+      canvasHeight += window.innerHeight - effectiveHeight;
+    }
+    return canvasHeight;
+  }
+
+  fitCanvasToWindow(e) {
+    const canvas = this.canvas.current;
+    if (canvas === null) {
+      return;
+    }
+
+    const { canvasWidth, canvasHeight, canvasX, canvasY } = this.state;
+    const dataURL = this.canvas.current.toDataURL();
+    this.setState(
+      {
+        canvasWidth: this.getFitWidth(canvasWidth, canvasX),
+        canvasHeight: this.getFitHeight(canvasHeight, canvasY),
+      },
+      () => {
+        this.redrawCanvas(dataURL);
+      }
+    );
   }
 
   setTool(tool) {
@@ -154,50 +224,50 @@ export default class App extends Component {
     const canvas = this.canvas.current;
     let negativeExpandX = false;
     let negativeExpandY = false;
-    let dataURL = null;
     let { canvasX, canvasY, canvasWidth, canvasHeight } = this.state;
 
     if (canvasX > 0) {
       negativeExpandX = true;
+
+      canvasWidth += canvasX;
     } else {
-      canvasX = -canvasX;
+      canvasX = -canvasX; // absolute value
+
+      canvasWidth = this.getFitWidth(canvasWidth, canvasX);
     }
-    canvasWidth += canvasX;
 
     if (canvasY > 0) {
       negativeExpandY = true;
+
+      canvasHeight += canvasY;
     } else {
-      canvasY = -canvasY;
-    }
-    canvasHeight += canvasY;
+      canvasY = -canvasY; // absolute value
 
-    if (negativeExpandX || negativeExpandY) {
-      dataURL = canvas.toDataURL();
-      this.setState({ saveURL: dataURL });
+      canvasHeight = this.getFitHeight(canvasHeight, canvasY);
     }
 
-    this.setState({
-      moving: false,
-      canvasX: 0,
-      canvasY: 0,
-      canvasWidth,
-      canvasHeight,
-    });
-
-    if (negativeExpandX || negativeExpandY) {
-      let img = new Image();
-      img.onload = function () {
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-        ctx.drawImage(
-          img,
-          negativeExpandX * canvasX,
-          negativeExpandY * canvasY
-        );
-        console.log(dataURL);
-      };
-      img.src = dataURL;
-    }
+    const dataURL = canvas.toDataURL();
+    this.setState(
+      {
+        moving: false,
+        canvasX: (1 - negativeExpandX) * -canvasX,
+        canvasY: (1 - negativeExpandY) * -canvasY,
+        canvasWidth,
+        canvasHeight,
+      },
+      () => {
+        let img = new Image();
+        img.onload = function () {
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(
+            img,
+            negativeExpandX * canvasX,
+            negativeExpandY * canvasY
+          );
+        };
+        img.src = dataURL;
+      }
+    );
   }
 
   beginDrawing(e) {
@@ -212,6 +282,14 @@ export default class App extends Component {
     this.setState({ x: e.clientX, y: e.clientY });
   }
 
+  adjustX(x) {
+    return x - this.state.canvasX;
+  }
+
+  adjustY(y) {
+    return y - this.state.canvasY;
+  }
+
   drawLineTo(x1, y1, emit) {
     const x0 = this.state.x;
     const y0 = this.state.y;
@@ -220,8 +298,8 @@ export default class App extends Component {
     const ctx = this.canvas.current.getContext("2d").canvas.getContext("2d");
 
     ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
+    ctx.moveTo(this.adjustX(x0), this.adjustY(y0));
+    ctx.lineTo(this.adjustX(x1), this.adjustY(y1));
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.stroke();
@@ -242,7 +320,22 @@ export default class App extends Component {
     this.drawLineTo(e.clientX, e.clientY, true);
   }
 
+  saveImage(e) {
+    const dataURL = this.canvas.current.toDataURL();
+    downloadURI(dataURL, "whiteboard.png");
+  }
+
   render() {
+    const colors = Object.keys(Colors).map((name) => (
+      <Dropdown.Item
+        key={name}
+        style={{ backgroundColor: Colors[name], color: Colors[name] }}
+        onClick={() => this.setState({ color: Colors[name] })}
+      >
+        {Colors[name]}
+      </Dropdown.Item>
+    ));
+
     return (
       <>
         <canvas
@@ -260,7 +353,7 @@ export default class App extends Component {
         <Container fluid>
           <Row>
             <Col>
-              <ButtonToolbar className="my-2 justify-content-center">
+              <ButtonToolbar className="my-3 justify-content-center">
                 <ButtonGroup size="lg">
                   <Button
                     variant="primary"
@@ -269,13 +362,26 @@ export default class App extends Component {
                   >
                     <FontAwesomeIcon icon={faHand} />
                   </Button>
-                  <Button
-                    variant="primary"
-                    active={this.state.activeTool === Tools.PENCIL}
-                    onClick={() => this.setTool(Tools.PENCIL)}
-                  >
-                    <FontAwesomeIcon icon={faPencil} />
-                  </Button>
+                  {/* work in progress */}
+                  <Dropdown as={ButtonGroup}>
+                    <Button
+                      variant="primary"
+                      active={this.state.activeTool === Tools.PENCIL}
+                      onClick={() => this.setTool(Tools.PENCIL)}
+                      style={{ borderRight: "0" }}
+                    >
+                      <FontAwesomeIcon icon={faPencil} />
+                    </Button>
+                    <Dropdown.Toggle
+                      split
+                      variant="primary"
+                      active={this.state.activeTool === Tools.PENCIL}
+                      onClickCapture={() => this.setTool(Tools.PENCIL)}
+                      style={{ borderLeft: "0" }}
+                    ></Dropdown.Toggle>
+                    <Dropdown.Menu>{colors}</Dropdown.Menu>
+                  </Dropdown>
+                  {/* end of work in progress */}
                   <Button
                     variant="primary"
                     active={this.state.activeTool === Tools.ERASER}
@@ -283,7 +389,7 @@ export default class App extends Component {
                   >
                     <FontAwesomeIcon icon={faEraser} />
                   </Button>
-                  <Button variant="success" href={this.state.saveURL}>
+                  <Button variant="success" onClick={this.saveImage}>
                     <FontAwesomeIcon icon={faFileArrowDown} />
                   </Button>
                 </ButtonGroup>
